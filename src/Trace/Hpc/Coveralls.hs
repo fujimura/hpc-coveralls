@@ -11,11 +11,13 @@
 
 module Trace.Hpc.Coveralls ( generateCoverallsFromTix ) where
 
+import           Control.Applicative
 import           Data.Aeson
 import           Data.Aeson.Types ()
 import           Data.Function
 import           Data.List
 import qualified Data.Map.Strict as M
+import           System.Environment (getEnv)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.Lix
@@ -82,12 +84,15 @@ coverageToJson converter filePath (source, mix, tixs) = object [
           Mix _ _ _ _ mixEntries = mix
           getExprSource' = getExprSource $ lines source
 
-toCoverallsJson :: String -> String -> LixConverter -> TestSuiteCoverageData -> Value
-toCoverallsJson serviceName jobId converter testSuiteCoverageData = object [
+toCoverallsJson :: String -> String -> Maybe String -> LixConverter -> TestSuiteCoverageData -> Value
+toCoverallsJson serviceName jobId repoToken converter testSuiteCoverageData = object $ [
     "service_job_id" .= jobId,
     "service_name" .= serviceName,
-    "source_files" .= toJsonCoverageList testSuiteCoverageData]
+    "source_files" .= toJsonCoverageList testSuiteCoverageData] ++ repoTokenObject
     where toJsonCoverageList = map (uncurry $ coverageToJson converter) . M.toList
+          repoTokenObject = case repoToken of
+                              Just x  -> [ "repo_token" .= x ]
+                              Nothing -> []
 
 mergeModuleCoverageData :: ModuleCoverageData -> ModuleCoverageData -> ModuleCoverageData
 mergeModuleCoverageData (source, mix, tixs1) (_, _, tixs2) =
@@ -125,7 +130,10 @@ generateCoverallsFromTix :: String   -- ^ CI name
                          -> IO Value -- ^ code coverage result in json format
 generateCoverallsFromTix serviceName jobId config = do
     testSuitesCoverages <- mapM (`readCoverageData` excludedDirPatterns) testSuiteNames
-    return $ toCoverallsJson serviceName jobId converter $ mergeCoverageData testSuitesCoverages
+    repoToken <- case serviceName of
+                   "circleci" -> Just <$> getEnv "COVERALLS_REPO_TOKEN"
+                   _          -> return Nothing
+    return $ toCoverallsJson serviceName jobId repoToken converter $ mergeCoverageData testSuitesCoverages
     where excludedDirPatterns = excludedDirs config
           testSuiteNames = testSuites config
           converter = case coverageMode config of
